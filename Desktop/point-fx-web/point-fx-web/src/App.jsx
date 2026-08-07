@@ -5,7 +5,7 @@ import logoMendez from './assets/logo-mendez.png';
 import logoKosho from './assets/logo-kosho.png';
 import logoCdk from './assets/logo-cdk.png';
 import logoPointFx from './assets/logo-pointfx.png';
-import logoWkc from './assets/logo-wkc.png';
+import logoWkc from './assets/Logo-wkc.png';
 import medallaOro from './assets/medalla-oro.png';
 import medallaPlata from './assets/medalla-plata.png';
 import medallaBronce from './assets/medalla-bronce.png';
