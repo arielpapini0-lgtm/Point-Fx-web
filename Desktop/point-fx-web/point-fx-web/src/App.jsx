@@ -25,9 +25,10 @@ const getLogoForSchool = (school) => {
 export default function PointFxPortal() {
   const [escuelas, setEscuelas] = useState([]);
   const [eventos, setEventos] = useState([]);
+  const [resultados, setResultados] = useState([]); // Nueva tabla de resultados por torneo
   const [loading, setLoading] = useState(true);
   const [selectedAthlete, setSelectedAthlete] = useState(null);
-  const [selectedEvent, setSelectedEvent] = useState(null); // Modal para ver Flyer
+  const [selectedEvent, setSelectedEvent] = useState(null);
   const [activeTab, setActiveTab] = useState("RANKING");
   const [selectedSchool, setSelectedSchool] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -69,16 +70,24 @@ export default function PointFxPortal() {
   }, [escuelas]);
 
   const fetchData = async () => {
+    // 1. Escuelas y sus atletas
     let { data: dataEscuelas } = await supabase
       .from('escuelas')
       .select(`id, nombre, ciudad, sensei, points, golds, silvers, bronzes, logo_url, atletas (id, nombre, categoria, points, golds, rank, status)`);
     if (dataEscuelas) setEscuelas(dataEscuelas);
 
+    // 2. Eventos
     let { data: dataEventos } = await supabase
       .from('eventos')
       .select('*')
       .order('id', { ascending: true });
     if (dataEventos) setEventos(dataEventos);
+
+    // 3. Resultados por torneo de cada atleta
+    let { data: dataResultados } = await supabase
+      .from('resultados_eventos')
+      .select('*');
+    if (dataResultados) setResultados(dataResultados);
 
     setLoading(false);
   };
@@ -125,7 +134,7 @@ export default function PointFxPortal() {
     </button>
   );
 
-  // --- PANEL DE ADMINISTRACIÓN COMPLETO CON SUBIDA DE ARCHIVOS ---
+  // --- PANEL DE ADMINISTRACIÓN COMPLETO ---
   const AdminPanel = () => {
     const [subTab, setSubTab] = useState("ATLETAS");
     
@@ -147,6 +156,12 @@ export default function PointFxPortal() {
     const [ubicacionEvento, setUbicacionEvento] = useState("");
     const [estadoEvento, setEstadoEvento] = useState("PROGRAMADO");
     const [flyerFile, setFlyerFile] = useState(null);
+
+    // Formulario Resultado Torneo (Asociar Atleta <-> Torneo)
+    const [resAtletaId, setResAtletaId] = useState(allAthletes[0]?.id || 1);
+    const [resEventoId, setResEventoId] = useState(eventos[0]?.id || 1);
+    const [resPuntos, setResPuntos] = useState(30);
+    const [resMedalla, setResMedalla] = useState("Oro");
 
     const handleSaveAtleta = async () => {
       const { error } = await supabase.from('atletas').insert({ 
@@ -170,77 +185,63 @@ export default function PointFxPortal() {
       let logoUrl = null;
       if (logoFile) {
         const fileName = `${Date.now()}-${logoFile.name}`;
-        const { data, error: uploadError } = await supabase.storage.from('logos').upload(fileName, logoFile);
-        if (uploadError) {
-          alert("Error al subir el logo: " + uploadError.message);
-          return;
-        }
+        const { error: uploadError } = await supabase.storage.from('logos').upload(fileName, logoFile);
+        if (uploadError) { alert("Error al subir el logo: " + uploadError.message); return; }
         const { data: publicURL } = supabase.storage.from('logos').getPublicUrl(fileName);
         logoUrl = publicURL.publicUrl;
       }
 
       const { error } = await supabase.from('escuelas').insert({ 
-        nombre: nombreEscuela, 
-        ciudad: ciudadEscuela, 
-        sensei: senseiEscuela, 
-        logo_url: logoUrl,
+        nombre: nombreEscuela, ciudad: ciudadEscuela, sensei: senseiEscuela, logo_url: logoUrl,
         points: 0, golds: 0, silvers: 0, bronzes: 0 
       });
       if (!error) {
-        alert("¡Escuela guardada con éxito!");
-        setNombreEscuela("");
-        setCiudadEscuela("");
-        setSenseiEscuela("");
-        setLogoFile(null);
+        alert("¡Escuela guardada!");
+        setNombreEscuela(""); setCiudadEscuela(""); setSenseiEscuela(""); setLogoFile(null);
         fetchData();
-      } else {
-        alert("Error: " + error.message);
-      }
+      } else { alert("Error: " + error.message); }
     };
 
     const handleSaveEvento = async () => {
       let flyerUrl = null;
       if (flyerFile) {
         const fileName = `${Date.now()}-${flyerFile.name}`;
-        const { data, error: uploadError } = await supabase.storage.from('flyers').upload(fileName, flyerFile);
-        if (uploadError) {
-          alert("Error al subir el flyer: " + uploadError.message);
-          return;
-        }
+        const { error: uploadError } = await supabase.storage.from('flyers').upload(fileName, flyerFile);
+        if (uploadError) { alert("Error al subir el flyer: " + uploadError.message); return; }
         const { data: publicURL } = supabase.storage.from('flyers').getPublicUrl(fileName);
         flyerUrl = publicURL.publicUrl;
       }
 
       const { error } = await supabase.from('eventos').insert({ 
-        nombre: nombreEvento, 
-        fecha: fechaEvento, 
-        ubicacion: ubicacionEvento, 
-        estado: estadoEvento, 
-        flyer_url: flyerUrl,
-        ganador: '-', 
-        puntos: 100 
+        nombre: nombreEvento, fecha: fechaEvento, ubicacion: ubicacionEvento, estado: estadoEvento, flyer_url: flyerUrl, ganador: '-', puntos: 100 
       });
       if (!error) {
-        alert("¡Evento guardado con éxito!");
-        setNombreEvento("");
-        setFechaEvento("");
-        setUbicacionEvento("");
-        setFlyerFile(null);
+        alert("¡Evento guardado!");
+        setNombreEvento(""); setFechaEvento(""); setUbicacionEvento(""); setFlyerFile(null);
+        fetchData();
+      } else { alert("Error: " + error.message); }
+    };
+
+    const handleSaveResultado = async () => {
+      const { error } = await supabase.from('resultados_eventos').insert({
+        atleta_id: parseInt(resAtletaId),
+        evento_id: parseInt(resEventoId),
+        puntos: parseInt(resPuntos),
+        medalla: resMedalla
+      });
+      if (!error) {
+        alert("¡Resultado de torneo guardado con éxito!");
         fetchData();
       } else {
-        alert("Error: " + error.message);
+        alert("Error al guardar resultado: " + error.message);
       }
     };
 
     const handleDelete = async (tabla, id) => {
       if (confirm("¿Estás seguro de eliminar este registro?")) {
         const { error } = await supabase.from(tabla).delete().eq('id', id);
-        if (!error) {
-          alert("Eliminado con éxito");
-          fetchData();
-        } else {
-          alert("Error al borrar: " + error.message);
-        }
+        if (!error) { alert("Eliminado con éxito"); fetchData(); }
+        else { alert("Error al borrar: " + error.message); }
       }
     };
 
@@ -248,14 +249,14 @@ export default function PointFxPortal() {
       <div className="bg-zinc-900/95 border border-cyan-500/50 p-6 rounded-3xl shadow-2xl my-10 font-mono backdrop-blur-md">
         <div className="flex justify-between items-center mb-6 border-b border-zinc-800 pb-4">
           <h3 className="text-white font-black text-sm uppercase tracking-wider text-cyan-400">⚡ Panel de Control y Gestión (Admin)</h3>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button onClick={() => setSubTab("ATLETAS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "ATLETAS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Atletas</button>
-            <button onClick={() => setSubTab("ESCUELAS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "ESCUELAS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Escuelas & Logos</button>
-            <button onClick={() => setSubTab("EVENTOS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "EVENTOS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Eventos & Flyers</button>
+            <button onClick={() => setSubTab("ESCUELAS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "ESCUELAS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Escuelas</button>
+            <button onClick={() => setSubTab("EVENTOS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "EVENTOS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Eventos</button>
+            <button onClick={() => setSubTab("RESULTADOS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "RESULTADOS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Cargar Resultados Torneo</button>
           </div>
         </div>
 
-        {/* GESTIÓN DE ATLETAS */}
         {subTab === "ATLETAS" && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
@@ -263,17 +264,16 @@ export default function PointFxPortal() {
               <select className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" value={escuelaId} onChange={(e) => setEscuelaId(e.target.value)}>
                 {escuelas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
               </select>
-              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Categoría (ej: Adulto)" value={categoriaAtleta} onChange={(e) => setCategoriaAtleta(e.target.value)} />
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Categoría" value={categoriaAtleta} onChange={(e) => setCategoriaAtleta(e.target.value)} />
               <div className="flex gap-2">
                 <input type="number" className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl w-24" placeholder="Puntos" value={puntosAtleta} onChange={(e) => setPuntosAtleta(e.target.value)} />
                 <button onClick={handleSaveAtleta} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs px-4 rounded-xl flex-1 transition">Guardar</button>
               </div>
             </div>
-
             <div className="max-h-60 overflow-y-auto space-y-2">
               {allAthletes.map(a => (
                 <div key={a.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
-                  <div><strong className="text-white">{a.nombre}</strong> <span className="text-zinc-400">({a.schoolName})</span> - <span className="text-cyan-400">{a.categoria}</span> [{a.points || 0} pts]</div>
+                  <div><strong className="text-white">{a.nombre}</strong> ({a.schoolName}) - <span className="text-cyan-400">{a.categoria}</span></div>
                   <button onClick={() => handleDelete('atletas', a.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900 hover:bg-red-900">Borrar</button>
                 </div>
               ))}
@@ -281,59 +281,65 @@ export default function PointFxPortal() {
           </div>
         )}
 
-        {/* GESTIÓN DE ESCUELAS CON LOGO */}
         {subTab === "ESCUELAS" && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800 items-center">
               <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Nombre Escuela" value={nombreEscuela} onChange={(e) => setNombreEscuela(e.target.value)} />
               <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Ciudad" value={ciudadEscuela} onChange={(e) => setCiudadEscuela(e.target.value)} />
               <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Sensei" value={senseiEscuela} onChange={(e) => setSenseiEscuela(e.target.value)} />
-              <div className="flex flex-col text-[10px] text-zinc-400">
-                <span>Logo (Imagen):</span>
-                <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files[0])} className="text-xs text-white file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:bg-zinc-800 file:text-cyan-400" />
-              </div>
-              <button onClick={handleSaveEscuela} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs p-3 rounded-xl transition">Guardar Escuela</button>
+              <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files[0])} className="text-xs text-white file:py-1 file:px-2 file:rounded-lg file:bg-zinc-800 file:text-cyan-400" />
+              <button onClick={handleSaveEscuela} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs p-3 rounded-xl transition">Guardar</button>
             </div>
-
             <div className="max-h-60 overflow-y-auto space-y-2">
               {escuelas.map(s => (
                 <div key={s.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
-                  <div className="flex items-center gap-3">
-                    <img src={getLogoForSchool(s)} alt="" className="w-8 h-8 object-contain bg-zinc-900 p-1 rounded-lg border border-zinc-800" />
-                    <div><strong className="text-white">{s.nombre}</strong> - <span className="text-zinc-400">{s.ciudad}</span> (Sensei: {s.sensei})</div>
-                  </div>
-                  <button onClick={() => handleDelete('escuelas', s.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900 hover:bg-red-900">Borrar</button>
+                  <div><strong className="text-white">{s.nombre}</strong> - {s.ciudad}</div>
+                  <button onClick={() => handleDelete('escuelas', s.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900">Borrar</button>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* GESTIÓN DE EVENTOS CON FLYER */}
         {subTab === "EVENTOS" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800 items-center">
-              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Nombre Torneo" value={nombreEvento} onChange={(e) => setNombreEvento(e.target.value)} />
-              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Fecha (15 Jun 2026)" value={fechaEvento} onChange={(e) => setFechaEvento(e.target.value)} />
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800 items-center">
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Torneo" value={nombreEvento} onChange={(e) => setNombreEvento(e.target.value)} />
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Fecha" value={fechaEvento} onChange={(e) => setFechaEvento(e.target.value)} />
               <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Ubicación" value={ubicacionEvento} onChange={(e) => setUbicacionEvento(e.target.value)} />
-              <select className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" value={estadoEvento} onChange={(e) => setEstadoEvento(e.target.value)}>
-                <option value="PROGRAMADO">PROGRAMADO</option>
-                <option value="FINALIZADO">FINALIZADO</option>
-              </select>
-              <div className="flex flex-col text-[10px] text-zinc-400">
-                <span>Flyer (Imagen):</span>
-                <input type="file" accept="image/*" onChange={(e) => setFlyerFile(e.target.files[0])} className="text-xs text-white file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:bg-zinc-800 file:text-cyan-400" />
-              </div>
+              <input type="file" accept="image/*" onChange={(e) => setFlyerFile(e.target.files[0])} className="text-xs text-white file:py-1 file:px-2 file:rounded-lg file:bg-zinc-800 file:text-cyan-400" />
               <button onClick={handleSaveEvento} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs p-3 rounded-xl transition">Guardar</button>
             </div>
-
             <div className="max-h-60 overflow-y-auto space-y-2">
               {eventos.map(ev => (
                 <div key={ev.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
-                  <div><strong className="text-white">{ev.nombre}</strong> ({ev.fecha}) - <span className="text-zinc-400">{ev.ubicacion}</span> [{ev.estado}] {ev.flyer_url && '🖼️ [Con Flyer]'}</div>
-                  <button onClick={() => handleDelete('eventos', ev.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900 hover:bg-red-900">Borrar</button>
+                  <div><strong className="text-white">{ev.nombre}</strong> ({ev.fecha})</div>
+                  <button onClick={() => handleDelete('eventos', ev.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900">Borrar</button>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* NUEVA SOLAPA: ASOCIAR ATLETA A UN TORNEO */}
+        {subTab === "RESULTADOS" && (
+          <div className="space-y-4">
+            <p className="text-xs text-zinc-400">Asociá un torneo específico a un atleta para que aparezca en su historial de la ficha:</p>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800 items-center">
+              <select className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" value={resAtletaId} onChange={(e) => setResAtletaId(e.target.value)}>
+                {allAthletes.map(a => <option key={a.id} value={a.id}>{a.nombre} ({a.schoolName})</option>)}
+              </select>
+              <select className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" value={resEventoId} onChange={(e) => setResEventoId(e.target.value)}>
+                {eventos.map(ev => <option key={ev.id} value={ev.id}>{ev.nombre}</option>)}
+              </select>
+              <input type="number" className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Puntos" value={resPuntos} onChange={(e) => setResPuntos(e.target.value)} />
+              <select className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" value={resMedalla} onChange={(e) => setResMedalla(e.target.value)}>
+                <option value="Oro">🥇 1° Puesto (Oro)</option>
+                <option value="Plata">🥈 2° Puesto (Plata)</option>
+                <option value="Bronce">🥉 3° Puesto (Bronce)</option>
+                <option value="Participación">Participación</option>
+              </select>
+              <button onClick={handleSaveResultado} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs p-3 rounded-xl transition">Asignar Torneo</button>
             </div>
           </div>
         )}
@@ -594,7 +600,6 @@ export default function PointFxPortal() {
           </div>
         )}
 
-        {/* --- CALENDARIO CON BOTÓN PARA VER FLYER --- */}
         {activeTab === "CALENDARIO" && (
           <div className="space-y-6 animate-fadeIn">
             <div className="border-b border-zinc-800 pb-4">
@@ -708,6 +713,54 @@ export default function PointFxPortal() {
 
       </main>
 
+      {/* --- MODAL DE ATLETA CON HISTORIAL DE TORNEOS REAL --- */}
+      {selectedAthlete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-zinc-900 border border-cyan-500/50 rounded-3xl w-full max-w-md p-6 relative shadow-[0_0_30px_rgba(6,182,212,0.2)] font-mono">
+            <button 
+              onClick={() => setSelectedAthlete(null)}
+              className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800/80 w-8 h-8 rounded-full flex items-center justify-center font-bold"
+            >
+              ✕
+            </button>
+
+            <div className="text-center pb-6 border-b border-zinc-800">
+              <div className="w-16 h-16 bg-blue-600/20 text-cyan-400 mx-auto rounded-2xl border border-cyan-500/30 flex items-center justify-center text-2xl font-black mb-3">
+                🥋
+              </div>
+              <h3 className="text-2xl font-black text-white font-sans">{selectedAthlete.nombre}</h3>
+              <p className="text-xs text-cyan-400 mt-1 uppercase tracking-widest">{selectedAthlete.categoria} • <span className="text-white">{selectedAthlete.schoolName}</span></p>
+            </div>
+
+            <div className="py-6 space-y-4">
+              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Historial de Torneos</h4>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {resultados.filter(r => r.atleta_id === selectedAthlete.id).length > 0 ? (
+                  resultados.filter(r => r.atleta_id === selectedAthlete.id).map(res => {
+                    const torneo = eventos.find(e => e.id === res.evento_id);
+                    return (
+                      <div key={res.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
+                        <span className="text-zinc-300">{torneo ? torneo.nombre : 'Torneo Oficial'}</span>
+                        <span className="text-yellow-400 font-bold">{res.medalla} (+{res.puntos} pts)</span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-zinc-500 text-xs italic">No registra torneos asociados en este circuito.</p>
+                )}
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setSelectedAthlete(null)}
+              className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition"
+            >
+              Cerrar Ficha
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* --- MODAL PARA VER FLYER DE TORNEO --- */}
       {selectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
@@ -780,43 +833,6 @@ export default function PointFxPortal() {
         </div>
       )}
 
-      {/* --- MODAL DE ATLETA --- */}
-      {selectedAthlete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-zinc-900 border border-cyan-500/50 rounded-3xl w-full max-w-md p-6 relative shadow-[0_0_30px_rgba(6,182,212,0.2)] font-mono">
-            <button 
-              onClick={() => setSelectedAthlete(null)}
-              className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800/80 w-8 h-8 rounded-full flex items-center justify-center font-bold"
-            >
-              ✕
-            </button>
-
-            <div className="text-center pb-6 border-b border-zinc-800">
-              <div className="w-16 h-16 bg-blue-600/20 text-cyan-400 mx-auto rounded-2xl border border-cyan-500/30 flex items-center justify-center text-2xl font-black mb-3">
-                🥋
-              </div>
-              <h3 className="text-2xl font-black text-white font-sans">{selectedAthlete.nombre}</h3>
-              <p className="text-xs text-cyan-400 mt-1 uppercase tracking-widest">{selectedAthlete.categoria} • <span className="text-white">{selectedAthlete.schoolName || selectedSchool?.nombre}</span></p>
-            </div>
-
-            <div className="py-6 space-y-4">
-              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Historial de Puntos</h4>
-              <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
-                <span className="text-zinc-300">Puntaje Acumulado en el Circuito</span>
-                <span className="text-cyan-400 font-bold text-base">{selectedAthlete.points || 0} pts</span>
-              </div>
-            </div>
-
-            <button 
-              onClick={() => setSelectedAthlete(null)}
-              className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition"
-            >
-              Cerrar Ficha
-            </button>
-          </div>
-        </div>
-      )}
-      
       <footer className="max-w-7xl mx-auto px-6 mt-20 text-center text-xs text-zinc-400 border-t border-zinc-800/80 pt-8 font-mono tracking-widest uppercase">
         Point FX League Management System • System Developed by Ariel Papini
       </footer>
