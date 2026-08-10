@@ -32,6 +32,36 @@ export default function PointFxPortal() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterCity, setFilterCity] = useState("Todas");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
+  
+  // Estados de Autenticación Admin
+  const [user, setUser] = useState(null);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      alert("Error al entrar: " + error.message);
+    } else {
+      setShowLoginModal(false);
+      setEmail("");
+      setPassword("");
+    }
+  };
 
   // Ordenar escuelas por puntaje
   const sortedSchools = useMemo(() => {
@@ -118,6 +148,34 @@ export default function PointFxPortal() {
       <span>{icon}</span> {label}
     </button>
   );
+
+  // Componente del Formulario de Administración Interno
+  const AdminForm = () => {
+    const [nombre, setNombre] = useState("");
+    const [puntos, setPuntos] = useState(0);
+
+    const handleSave = async () => {
+      const { error } = await supabase.from('atletas').insert({ nombre, points: puntos, status: 'Activo' });
+      if (!error) {
+        alert("¡Atleta guardado con éxito!");
+        setNombre("");
+        setPuntos(0);
+      } else {
+        alert("Error al guardar: " + error.message);
+      }
+    };
+
+    return (
+      <div className="bg-zinc-900/90 border border-cyan-500/50 p-6 rounded-3xl shadow-2xl my-10 font-mono backdrop-blur-md">
+        <h3 className="text-white font-black text-sm mb-4 uppercase tracking-wider text-cyan-400">⚡ Panel Admin: Cargar Atleta Rápido</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <input className="bg-zinc-950 border border-zinc-800 p-3 text-white text-xs rounded-xl outline-none focus:border-cyan-500" placeholder="Nombre y Apellido" value={nombre} onChange={(e) => setNombre(e.target.value)} />
+          <input className="bg-zinc-950 border border-zinc-800 p-3 text-white text-xs rounded-xl outline-none focus:border-cyan-500" type="number" placeholder="Puntos" value={puntos} onChange={(e) => setPuntos(e.target.value)} />
+        </div>
+        <button onClick={handleSave} className="bg-gradient-to-r from-blue-600 to-cyan-600 px-6 py-3 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg shadow-blue-600/30 transition">Guardar en Base de Datos</button>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen text-zinc-100 font-sans selection:bg-blue-600 selection:text-white pb-24 relative overflow-hidden bg-[#07090f]">
@@ -439,7 +497,7 @@ export default function PointFxPortal() {
           </div>
         )}
 
-        {/* --- PESTAÑA ATLETAS (CON FILTRO DE CATEGORÍAS Y PODIO TOP 3) --- */}
+        {/* --- PESTAÑA ATLETAS --- */}
         {activeTab === "ATLETAS" && (
           <div className="space-y-10 animate-fadeIn">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-zinc-800 pb-4 gap-4">
@@ -469,7 +527,7 @@ export default function PointFxPortal() {
               </div>
             </div>
 
-            {/* PODIO DE ATLETAS (TOP 3 DE LA CATEGORÍA SELECCIONADA) */}
+            {/* PODIO DE ATLETAS */}
             {filteredAthletes.length >= 3 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 items-end">
                 
@@ -494,7 +552,7 @@ export default function PointFxPortal() {
                   </div>
                 </div>
 
-                {/* 1er PUESTO ATLETA (LÍDER HUD) */}
+                {/* 1er PUESTO ATLETA */}
                 <div onClick={() => setSelectedAthlete(filteredAthletes[0])} className="relative rounded-[28px] p-[2px] bg-gradient-to-b from-cyan-400 via-blue-500 to-zinc-900 cursor-pointer transform md:-translate-y-4 transition group shadow-2xl shadow-cyan-500/20">
                   <div className="rounded-[26px] bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-7 backdrop-blur-xl border border-cyan-400/50 text-center relative shadow-[inset_0_0_20px_rgba(6,182,212,0.2)]">
                     <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex flex-col items-center">
@@ -599,6 +657,9 @@ export default function PointFxPortal() {
           </div>
         )}
 
+        {/* Formulario que solo aparece si estás logueado como Admin */}
+        {user && <AdminForm />}
+
       </main>
 
       {/* --- MODAL DE ATLETA --- */}
@@ -644,6 +705,54 @@ export default function PointFxPortal() {
             >
               Cerrar Ficha
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* BOTÓN FLOTANTE DISCRETO PARA ADMINISTRADOR */}
+      <div className="fixed bottom-4 right-4 z-50">
+        {!user ? (
+          <button 
+            onClick={() => setShowLoginModal(true)}
+            className="bg-zinc-900/80 hover:bg-zinc-800 text-zinc-500 hover:text-cyan-400 text-[10px] font-mono px-3 py-1.5 rounded-full border border-zinc-800 backdrop-blur transition shadow-xl"
+          >
+            🔒 Admin
+          </button>
+        ) : (
+          <button 
+            onClick={() => supabase.auth.signOut()}
+            className="bg-red-950/90 text-red-400 text-xs font-mono px-4 py-2 rounded-xl border border-red-900 shadow-2xl hover:bg-red-900 transition"
+          >
+            Cerrar Sesión Admin
+          </button>
+        )}
+      </div>
+
+      {/* VENTANA EMERGENTE DE LOGIN */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-zinc-900 border border-cyan-500/50 rounded-3xl w-full max-w-sm p-6 relative shadow-2xl font-mono">
+            <button onClick={() => setShowLoginModal(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white">✕</button>
+            <h3 className="text-lg font-black text-white mb-4 text-center">Acceso Propietario</h3>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <input 
+                type="email" 
+                placeholder="Correo electrónico" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-white text-xs outline-none focus:border-cyan-500"
+              />
+              <input 
+                type="password" 
+                placeholder="Contraseña" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-white text-xs outline-none focus:border-cyan-500"
+              />
+              <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-xl text-xs uppercase tracking-widest transition">
+                Entrar al Sistema
+              </button>
+            </form>
           </div>
         </div>
       )}
