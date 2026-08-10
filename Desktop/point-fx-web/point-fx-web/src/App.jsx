@@ -780,6 +780,43 @@ export default function PointFxPortal() {
         </div>
       )}
 
+      {/* --- MODAL DE ATLETA --- */}
+      {selectedAthlete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-zinc-900 border border-cyan-500/50 rounded-3xl w-full max-w-md p-6 relative shadow-[0_0_30px_rgba(6,182,212,0.2)] font-mono">
+            <button 
+              onClick={() => setSelectedAthlete(null)}
+              className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800/80 w-8 h-8 rounded-full flex items-center justify-center font-bold"
+            >
+              ✕
+            </button>
+
+            <div className="text-center pb-6 border-b border-zinc-800">
+              <div className="w-16 h-16 bg-blue-600/20 text-cyan-400 mx-auto rounded-2xl border border-cyan-500/30 flex items-center justify-center text-2xl font-black mb-3">
+                🥋
+              </div>
+              <h3 className="text-2xl font-black text-white font-sans">{selectedAthlete.nombre}</h3>
+              <p className="text-xs text-cyan-400 mt-1 uppercase tracking-widest">{selectedAthlete.categoria} • <span className="text-white">{selectedAthlete.schoolName || selectedSchool?.nombre}</span></p>
+            </div>
+
+            <div className="py-6 space-y-4">
+              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Historial de Puntos</h4>
+              <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
+                <span className="text-zinc-300">Puntaje Acumulado en el Circuito</span>
+                <span className="text-cyan-400 font-bold text-base">{selectedAthlete.points || 0} pts</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setSelectedAthlete(null)}
+              className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition"
+            >
+              Cerrar Ficha
+            </button>
+          </div>
+        </div>
+      )}
+      
       <footer className="max-w-7xl mx-auto px-6 mt-20 text-center text-xs text-zinc-400 border-t border-zinc-800/80 pt-8 font-mono tracking-widest uppercase">
         Point FX League Management System • System Developed by Ariel Papini
       </footer>
