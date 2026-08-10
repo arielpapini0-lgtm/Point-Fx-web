@@ -12,13 +12,13 @@ import medallaBronce from './assets/medalla-bronce.png';
 import coronaImg from './assets/corona.png';
 import { supabase } from './supabaseClient';
 
-// Función para asignar el logo dinámicamente según el ID de Supabase
-const getLogoForSchool = (id) => {
-  switch(id) {
-    case 1: return logoMendez; // ID 1 = American Chaiu Do Kwan (Team Méndez)
-    case 2: return logoKosho;  // ID 2 = Kenpo Kosho Ryu
-    case 3: return logoCdk;    // Si agregás la otra escuela como ID 3
-    default: return logoPointFx; // Un logo por defecto si el ID no coincide
+const getLogoForSchool = (school) => {
+  if (school?.logo_url) return school.logo_url;
+  switch(school?.id) {
+    case 1: return logoMendez;
+    case 2: return logoKosho;
+    case 3: return logoCdk;
+    default: return logoPointFx;
   }
 };
 
@@ -27,6 +27,7 @@ export default function PointFxPortal() {
   const [eventos, setEventos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAthlete, setSelectedAthlete] = useState(null);
+  const [selectedEvent, setSelectedEvent] = useState(null); // Modal para ver Flyer
   const [activeTab, setActiveTab] = useState("RANKING");
   const [selectedSchool, setSelectedSchool] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -63,61 +64,40 @@ export default function PointFxPortal() {
     }
   };
 
-  // Ordenar escuelas por puntaje
   const sortedSchools = useMemo(() => {
     return [...escuelas].sort((a, b) => (b.points || 0) - (a.points || 0));
   }, [escuelas]);
 
+  const fetchData = async () => {
+    let { data: dataEscuelas } = await supabase
+      .from('escuelas')
+      .select(`id, nombre, ciudad, sensei, points, golds, silvers, bronzes, logo_url, atletas (id, nombre, categoria, points, golds, rank, status)`);
+    if (dataEscuelas) setEscuelas(dataEscuelas);
+
+    let { data: dataEventos } = await supabase
+      .from('eventos')
+      .select('*')
+      .order('id', { ascending: true });
+    if (dataEventos) setEventos(dataEventos);
+
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      // 1. Traemos las escuelas
-      let { data: dataEscuelas, error: errEscuelas } = await supabase
-        .from('escuelas')
-        .select(`
-          id, nombre, ciudad, sensei, points, golds, silvers, bronzes,
-          atletas (id, nombre, categoria, points, golds, rank, status)
-        `);
-
-      if (dataEscuelas) {
-        setEscuelas(dataEscuelas);
-      }
-      if (errEscuelas) console.error("Error escuelas:", errEscuelas);
-
-      // 2. Traemos los eventos (ordenados por ID)
-      let { data: dataEventos, error: errEventos } = await supabase
-        .from('eventos')
-        .select('*')
-        .order('id', { ascending: true });
-
-      if (dataEventos) {
-        setEventos(dataEventos);
-      }
-      if (errEventos) console.error("Error eventos:", errEventos);
-
-      setLoading(false);
-    };
-
     fetchData();
   }, []);
 
-  // Lista aplanada de todos los atletas ordenada por puntos
   const allAthletes = useMemo(() => {
     return escuelas
-      .flatMap(s => (s.atletas || []).map(a => ({ 
-        ...a, 
-        schoolName: s.nombre, 
-        schoolLogoImg: getLogoForSchool(s.id) 
-      })))
+      .flatMap(s => (s.atletas || []).map(a => ({ ...a, schoolName: s.nombre, schoolLogoImg: getLogoForSchool(s) })))
       .sort((a, b) => (b.points || 0) - (a.points || 0));
   }, [escuelas]);
 
-  // Obtener lista única de categorías para los filtros de atletas
   const allCategories = useMemo(() => {
     const validCategories = allAthletes.map(a => a.categoria).filter(Boolean);
     return ["Todas", ...new Set(validCategories)];
   }, [allAthletes]);
 
-  // Filtrar atletas por categoría seleccionada
   const filteredAthletes = useMemo(() => {
     if (selectedCategory === "Todas") return allAthletes;
     return allAthletes.filter(a => a.categoria === selectedCategory);
@@ -125,11 +105,7 @@ export default function PointFxPortal() {
 
   const filteredSchools = sortedSchools.filter(school => {
     const searchLower = searchTerm.toLowerCase();
-    const matchesSearch = 
-      (school.nombre || "").toLowerCase().includes(searchLower) || 
-      (school.ciudad || "").toLowerCase().includes(searchLower) ||
-      (school.sensei || "").toLowerCase().includes(searchLower);
-    
+    const matchesSearch = (school.nombre || "").toLowerCase().includes(searchLower) || (school.ciudad || "").toLowerCase().includes(searchLower) || (school.sensei || "").toLowerCase().includes(searchLower);
     const matchesCity = filterCity === "Todas" || school.ciudad === filterCity;
     return matchesSearch && matchesCity;
   });
@@ -149,30 +125,218 @@ export default function PointFxPortal() {
     </button>
   );
 
-  // Componente del Formulario de Administración Interno
-  const AdminForm = () => {
-    const [nombre, setNombre] = useState("");
-    const [puntos, setPuntos] = useState(0);
+  // --- PANEL DE ADMINISTRACIÓN COMPLETO CON SUBIDA DE ARCHIVOS ---
+  const AdminPanel = () => {
+    const [subTab, setSubTab] = useState("ATLETAS");
+    
+    // Formulario Atleta
+    const [nombreAtleta, setNombreAtleta] = useState("");
+    const [escuelaId, setEscuelaId] = useState(escuelas[0]?.id || 1);
+    const [categoriaAtleta, setCategoriaAtleta] = useState("Adulto");
+    const [puntosAtleta, setPuntosAtleta] = useState(0);
 
-    const handleSave = async () => {
-      const { error } = await supabase.from('atletas').insert({ nombre, points: puntos, status: 'Activo' });
+    // Formulario Escuela
+    const [nombreEscuela, setNombreEscuela] = useState("");
+    const [ciudadEscuela, setCiudadEscuela] = useState("");
+    const [senseiEscuela, setSenseiEscuela] = useState("");
+    const [logoFile, setLogoFile] = useState(null);
+
+    // Formulario Evento
+    const [nombreEvento, setNombreEvento] = useState("");
+    const [fechaEvento, setFechaEvento] = useState("");
+    const [ubicacionEvento, setUbicacionEvento] = useState("");
+    const [estadoEvento, setEstadoEvento] = useState("PROGRAMADO");
+    const [flyerFile, setFlyerFile] = useState(null);
+
+    const handleSaveAtleta = async () => {
+      const { error } = await supabase.from('atletas').insert({ 
+        nombre: nombreAtleta, 
+        escuela_id: parseInt(escuelaId), 
+        categoria: categoriaAtleta, 
+        points: parseInt(puntosAtleta) || 0, 
+        status: 'Activo' 
+      });
       if (!error) {
-        alert("¡Atleta guardado con éxito!");
-        setNombre("");
-        setPuntos(0);
+        alert("¡Atleta guardado!");
+        setNombreAtleta("");
+        setPuntosAtleta(0);
+        fetchData();
       } else {
-        alert("Error al guardar: " + error.message);
+        alert("Error: " + error.message);
+      }
+    };
+
+    const handleSaveEscuela = async () => {
+      let logoUrl = null;
+      if (logoFile) {
+        const fileName = `${Date.now()}-${logoFile.name}`;
+        const { data, error: uploadError } = await supabase.storage.from('logos').upload(fileName, logoFile);
+        if (uploadError) {
+          alert("Error al subir el logo: " + uploadError.message);
+          return;
+        }
+        const { data: publicURL } = supabase.storage.from('logos').getPublicUrl(fileName);
+        logoUrl = publicURL.publicUrl;
+      }
+
+      const { error } = await supabase.from('escuelas').insert({ 
+        nombre: nombreEscuela, 
+        ciudad: ciudadEscuela, 
+        sensei: senseiEscuela, 
+        logo_url: logoUrl,
+        points: 0, golds: 0, silvers: 0, bronzes: 0 
+      });
+      if (!error) {
+        alert("¡Escuela guardada con éxito!");
+        setNombreEscuela("");
+        setCiudadEscuela("");
+        setSenseiEscuela("");
+        setLogoFile(null);
+        fetchData();
+      } else {
+        alert("Error: " + error.message);
+      }
+    };
+
+    const handleSaveEvento = async () => {
+      let flyerUrl = null;
+      if (flyerFile) {
+        const fileName = `${Date.now()}-${flyerFile.name}`;
+        const { data, error: uploadError } = await supabase.storage.from('flyers').upload(fileName, flyerFile);
+        if (uploadError) {
+          alert("Error al subir el flyer: " + uploadError.message);
+          return;
+        }
+        const { data: publicURL } = supabase.storage.from('flyers').getPublicUrl(fileName);
+        flyerUrl = publicURL.publicUrl;
+      }
+
+      const { error } = await supabase.from('eventos').insert({ 
+        nombre: nombreEvento, 
+        fecha: fechaEvento, 
+        ubicacion: ubicacionEvento, 
+        estado: estadoEvento, 
+        flyer_url: flyerUrl,
+        ganador: '-', 
+        puntos: 100 
+      });
+      if (!error) {
+        alert("¡Evento guardado con éxito!");
+        setNombreEvento("");
+        setFechaEvento("");
+        setUbicacionEvento("");
+        setFlyerFile(null);
+        fetchData();
+      } else {
+        alert("Error: " + error.message);
+      }
+    };
+
+    const handleDelete = async (tabla, id) => {
+      if (confirm("¿Estás seguro de eliminar este registro?")) {
+        const { error } = await supabase.from(tabla).delete().eq('id', id);
+        if (!error) {
+          alert("Eliminado con éxito");
+          fetchData();
+        } else {
+          alert("Error al borrar: " + error.message);
+        }
       }
     };
 
     return (
-      <div className="bg-zinc-900/90 border border-cyan-500/50 p-6 rounded-3xl shadow-2xl my-10 font-mono backdrop-blur-md">
-        <h3 className="text-white font-black text-sm mb-4 uppercase tracking-wider text-cyan-400">⚡ Panel Admin: Cargar Atleta Rápido</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <input className="bg-zinc-950 border border-zinc-800 p-3 text-white text-xs rounded-xl outline-none focus:border-cyan-500" placeholder="Nombre y Apellido" value={nombre} onChange={(e) => setNombre(e.target.value)} />
-          <input className="bg-zinc-950 border border-zinc-800 p-3 text-white text-xs rounded-xl outline-none focus:border-cyan-500" type="number" placeholder="Puntos" value={puntos} onChange={(e) => setPuntos(e.target.value)} />
+      <div className="bg-zinc-900/95 border border-cyan-500/50 p-6 rounded-3xl shadow-2xl my-10 font-mono backdrop-blur-md">
+        <div className="flex justify-between items-center mb-6 border-b border-zinc-800 pb-4">
+          <h3 className="text-white font-black text-sm uppercase tracking-wider text-cyan-400">⚡ Panel de Control y Gestión (Admin)</h3>
+          <div className="flex gap-2">
+            <button onClick={() => setSubTab("ATLETAS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "ATLETAS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Atletas</button>
+            <button onClick={() => setSubTab("ESCUELAS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "ESCUELAS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Escuelas & Logos</button>
+            <button onClick={() => setSubTab("EVENTOS")} className={`px-3 py-1.5 rounded-xl text-xs font-bold ${subTab === "EVENTOS" ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>Eventos & Flyers</button>
+          </div>
         </div>
-        <button onClick={handleSave} className="bg-gradient-to-r from-blue-600 to-cyan-600 px-6 py-3 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg shadow-blue-600/30 transition">Guardar en Base de Datos</button>
+
+        {/* GESTIÓN DE ATLETAS */}
+        {subTab === "ATLETAS" && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Nombre y Apellido" value={nombreAtleta} onChange={(e) => setNombreAtleta(e.target.value)} />
+              <select className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" value={escuelaId} onChange={(e) => setEscuelaId(e.target.value)}>
+                {escuelas.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </select>
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Categoría (ej: Adulto)" value={categoriaAtleta} onChange={(e) => setCategoriaAtleta(e.target.value)} />
+              <div className="flex gap-2">
+                <input type="number" className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl w-24" placeholder="Puntos" value={puntosAtleta} onChange={(e) => setPuntosAtleta(e.target.value)} />
+                <button onClick={handleSaveAtleta} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs px-4 rounded-xl flex-1 transition">Guardar</button>
+              </div>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {allAthletes.map(a => (
+                <div key={a.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
+                  <div><strong className="text-white">{a.nombre}</strong> <span className="text-zinc-400">({a.schoolName})</span> - <span className="text-cyan-400">{a.categoria}</span> [{a.points || 0} pts]</div>
+                  <button onClick={() => handleDelete('atletas', a.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900 hover:bg-red-900">Borrar</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* GESTIÓN DE ESCUELAS CON LOGO */}
+        {subTab === "ESCUELAS" && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800 items-center">
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Nombre Escuela" value={nombreEscuela} onChange={(e) => setNombreEscuela(e.target.value)} />
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Ciudad" value={ciudadEscuela} onChange={(e) => setCiudadEscuela(e.target.value)} />
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Sensei" value={senseiEscuela} onChange={(e) => setSenseiEscuela(e.target.value)} />
+              <div className="flex flex-col text-[10px] text-zinc-400">
+                <span>Logo (Imagen):</span>
+                <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files[0])} className="text-xs text-white file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:bg-zinc-800 file:text-cyan-400" />
+              </div>
+              <button onClick={handleSaveEscuela} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs p-3 rounded-xl transition">Guardar Escuela</button>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {escuelas.map(s => (
+                <div key={s.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
+                  <div className="flex items-center gap-3">
+                    <img src={getLogoForSchool(s)} alt="" className="w-8 h-8 object-contain bg-zinc-900 p-1 rounded-lg border border-zinc-800" />
+                    <div><strong className="text-white">{s.nombre}</strong> - <span className="text-zinc-400">{s.ciudad}</span> (Sensei: {s.sensei})</div>
+                  </div>
+                  <button onClick={() => handleDelete('escuelas', s.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900 hover:bg-red-900">Borrar</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* GESTIÓN DE EVENTOS CON FLYER */}
+        {subTab === "EVENTOS" && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-3 bg-zinc-950 p-4 rounded-2xl border border-zinc-800 items-center">
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Nombre Torneo" value={nombreEvento} onChange={(e) => setNombreEvento(e.target.value)} />
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Fecha (15 Jun 2026)" value={fechaEvento} onChange={(e) => setFechaEvento(e.target.value)} />
+              <input className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" placeholder="Ubicación" value={ubicacionEvento} onChange={(e) => setUbicacionEvento(e.target.value)} />
+              <select className="bg-zinc-900 border border-zinc-800 p-2.5 text-white text-xs rounded-xl" value={estadoEvento} onChange={(e) => setEstadoEvento(e.target.value)}>
+                <option value="PROGRAMADO">PROGRAMADO</option>
+                <option value="FINALIZADO">FINALIZADO</option>
+              </select>
+              <div className="flex flex-col text-[10px] text-zinc-400">
+                <span>Flyer (Imagen):</span>
+                <input type="file" accept="image/*" onChange={(e) => setFlyerFile(e.target.files[0])} className="text-xs text-white file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:bg-zinc-800 file:text-cyan-400" />
+              </div>
+              <button onClick={handleSaveEvento} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs p-3 rounded-xl transition">Guardar</button>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {eventos.map(ev => (
+                <div key={ev.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
+                  <div><strong className="text-white">{ev.nombre}</strong> ({ev.fecha}) - <span className="text-zinc-400">{ev.ubicacion}</span> [{ev.estado}] {ev.flyer_url && '🖼️ [Con Flyer]'}</div>
+                  <button onClick={() => handleDelete('eventos', ev.id)} className="bg-red-950 text-red-400 px-3 py-1 rounded-lg border border-red-900 hover:bg-red-900">Borrar</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -180,7 +344,6 @@ export default function PointFxPortal() {
   return (
     <div className="min-h-screen text-zinc-100 font-sans selection:bg-blue-600 selection:text-white pb-24 relative overflow-hidden bg-[#07090f]">
       
-      {/* FONDO DE ESTADIO REAL */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden bg-[#07090f]">
         <img src="/estadio.png" alt="Fondo Estadio" className="absolute inset-0 w-full h-full object-cover opacity-75" />
         <div className="absolute inset-0 bg-[#07090f]/50 z-10"></div>
@@ -188,7 +351,6 @@ export default function PointFxPortal() {
         <div className="absolute -bottom-[20%] -right-[10%] w-[800px] h-[800px] bg-red-600/15 blur-[150px] rounded-full z-10"></div>
       </div>
 
-      {/* HEADER */}
       <header className="border-b border-zinc-800/80 bg-[#0b0e14]/90 backdrop-blur sticky top-0 z-50 px-6 py-4 shadow-2xl">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-4">
@@ -249,19 +411,16 @@ export default function PointFxPortal() {
                   </div>
                 </div>
 
-                {/* PODIO DE ESCUELAS CON ESTÉTICA HUD */}
                 {sortedSchools.length >= 3 && (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 items-end">
-                    
-                    {/* 2do LUGAR */}
-                    <div onClick={() => setSelectedSchool(sortedSchools[1])} className="relative rounded-[28px] p-[1.5px] bg-gradient-to-b from-cyan-500/40 via-blue-600/20 to-zinc-800 cursor-pointer transition transform hover:-translate-y-2 group shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+                    <div onClick={() => setSelectedSchool(sortedSchools[1])} className="relative rounded-[28px] p-[1.5px] bg-gradient-to-b from-cyan-500/40 via-blue-600/20 to-zinc-800 cursor-pointer transition transform hover:-translate-y-2 group">
                       <div className="rounded-[26px] bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-6 backdrop-blur-xl border border-cyan-500/30 text-center relative">
                         <div className="absolute -top-5 left-1/2 -translate-x-1/2 flex items-center gap-2">
                           <img src={medallaPlata} alt="Plata" className="w-10 h-10 object-contain drop-shadow-md" />
                           <span className="bg-zinc-800 text-cyan-300 font-black px-3 py-0.5 rounded-full text-xs border border-cyan-500/40 font-mono">2° LUGAR</span>
                         </div>
                         <div className="h-20 my-5 flex items-center justify-center">
-                          <img src={getLogoForSchool(sortedSchools[1].id)} alt={sortedSchools[1].nombre} className="max-h-full object-contain drop-shadow-[0_10px_15px_rgba(0,0,0,0.6)] group-hover:scale-110 transition" />
+                          <img src={getLogoForSchool(sortedSchools[1])} alt={sortedSchools[1].nombre} className="max-h-full object-contain drop-shadow-[0_10px_15px_rgba(0,0,0,0.6)] group-hover:scale-110 transition" />
                         </div>
                         <h3 className="font-extrabold text-xl text-white">{sortedSchools[1].nombre}</h3>
                         <p className="text-xs text-zinc-300 mb-5 font-mono">{sortedSchools[1].ciudad}</p>
@@ -272,7 +431,6 @@ export default function PointFxPortal() {
                       </div>
                     </div>
 
-                    {/* 1er LUGAR (LÍDER HUD) */}
                     <div onClick={() => setSelectedSchool(sortedSchools[0])} className="relative rounded-[28px] p-[2px] bg-gradient-to-b from-cyan-400 via-blue-500 to-zinc-900 cursor-pointer transform md:-translate-y-4 transition group shadow-2xl shadow-cyan-500/20">
                       <div className="rounded-[26px] bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-7 backdrop-blur-xl border border-cyan-400/50 text-center relative shadow-[inset_0_0_20px_rgba(6,182,212,0.2)]">
                         <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex flex-col items-center">
@@ -280,7 +438,7 @@ export default function PointFxPortal() {
                           <span className="bg-gradient-to-r from-blue-600 to-cyan-400 text-white font-black px-4 py-1 rounded-full text-xs tracking-widest shadow-lg font-mono border border-cyan-200/50">LÍDER ANUAL</span>
                         </div>
                         <div className="h-28 my-6 flex items-center justify-center">
-                          <img src={getLogoForSchool(sortedSchools[0].id)} alt={sortedSchools[0].nombre} className="max-h-full object-contain drop-shadow-[0_10px_25px_rgba(6,182,212,0.6)] group-hover:scale-110 transition animate-pulse" />
+                          <img src={getLogoForSchool(sortedSchools[0])} alt={sortedSchools[0].nombre} className="max-h-full object-contain drop-shadow-[0_10px_25px_rgba(6,182,212,0.6)] group-hover:scale-110 transition animate-pulse" />
                         </div>
                         <h3 className="font-black text-2xl md:text-3xl text-white">{sortedSchools[0].nombre}</h3>
                         <p className="text-xs text-cyan-300 font-bold mb-5 font-mono">{sortedSchools[0].ciudad}</p>
@@ -291,15 +449,14 @@ export default function PointFxPortal() {
                       </div>
                     </div>
 
-                    {/* 3er LUGAR */}
-                    <div onClick={() => setSelectedSchool(sortedSchools[2])} className="relative rounded-[28px] p-[1.5px] bg-gradient-to-b from-cyan-500/40 via-blue-600/20 to-zinc-800 cursor-pointer transition transform hover:-translate-y-2 group shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+                    <div onClick={() => setSelectedSchool(sortedSchools[2])} className="relative rounded-[28px] p-[1.5px] bg-gradient-to-b from-cyan-500/40 via-blue-600/20 to-zinc-800 cursor-pointer transition transform hover:-translate-y-2 group">
                       <div className="rounded-[26px] bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-6 backdrop-blur-xl border border-cyan-500/30 text-center relative">
                         <div className="absolute -top-5 left-1/2 -translate-x-1/2 flex items-center gap-2">
                           <img src={medallaBronce} alt="Bronce" className="w-10 h-10 object-contain drop-shadow-md" />
                           <span className="bg-zinc-800 text-amber-500 font-black px-3 py-0.5 rounded-full text-xs border border-amber-500/40 font-mono">3° LUGAR</span>
                         </div>
                         <div className="h-20 my-5 flex items-center justify-center">
-                          <img src={getLogoForSchool(sortedSchools[2].id)} alt={sortedSchools[2].nombre} className="max-h-full object-contain drop-shadow-[0_10px_15px_rgba(0,0,0,0.6)] group-hover:scale-110 transition" />
+                          <img src={getLogoForSchool(sortedSchools[2])} alt={sortedSchools[2].nombre} className="max-h-full object-contain drop-shadow-[0_10px_15px_rgba(0,0,0,0.6)] group-hover:scale-110 transition" />
                         </div>
                         <h3 className="font-extrabold text-xl text-white">{sortedSchools[2].nombre}</h3>
                         <p className="text-xs text-zinc-300 mb-5 font-mono">{sortedSchools[2].ciudad}</p>
@@ -309,11 +466,9 @@ export default function PointFxPortal() {
                         </div>
                       </div>
                     </div>
-
                   </div>
                 )}
 
-                {/* BUSCADOR */}
                 <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-zinc-900/90 border border-zinc-800 p-5 rounded-2xl shadow-xl backdrop-blur-md">
                   <div className="relative w-full md:w-96 bg-zinc-950 border border-zinc-800 rounded-2xl shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] focus-within:border-cyan-500/50 transition">
                     <input 
@@ -326,26 +481,22 @@ export default function PointFxPortal() {
                   </div>
                   
                   <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
-                    {allCities.map((city) => {
-                      const isActive = filterCity === city;
-                      return (
-                        <button 
-                          key={city}
-                          onClick={() => setFilterCity(city)}
-                          className={`px-4 py-2 rounded-full text-[11px] font-black tracking-widest border transition-all duration-200 uppercase font-mono ${
-                            isActive 
-                              ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30 scale-105' 
-                              : 'bg-zinc-900/80 border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-white hover:bg-zinc-800'
-                          }`}
-                        >
-                          {city}
-                        </button>
-                      );
-                    })}
+                    {allCities.map((city) => (
+                      <button 
+                        key={city}
+                        onClick={() => setFilterCity(city)}
+                        className={`px-4 py-2 rounded-full text-[11px] font-black tracking-widest border transition-all duration-200 uppercase font-mono ${
+                          filterCity === city 
+                            ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30 scale-105' 
+                            : 'bg-zinc-900/80 border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-white hover:bg-zinc-800'
+                        }`}
+                      >
+                        {city}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {/* TABLA DE ESCUELAS */}
                 <div className="bg-zinc-900/90 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl backdrop-blur-md">
                   <div className="p-5 bg-zinc-950 border-b border-zinc-800 flex justify-between items-center text-xs text-zinc-400 uppercase font-mono font-black tracking-widest">
                     <span>Ranking / Escuela</span>
@@ -360,13 +511,11 @@ export default function PointFxPortal() {
                         className="p-5 flex items-center justify-between hover:bg-zinc-800/60 transition cursor-pointer group"
                       >
                         <div className="flex items-center space-x-5">
-                          <span className={`font-mono font-black text-lg w-10 text-center ${
-                            index === 0 ? 'text-cyan-400' : index === 1 ? 'text-zinc-300' : index === 2 ? 'text-amber-600' : 'text-zinc-600'
-                          }`}>
+                          <span className={`font-mono font-black text-lg w-10 text-center ${index === 0 ? 'text-cyan-400' : index === 1 ? 'text-zinc-300' : index === 2 ? 'text-amber-600' : 'text-zinc-600'}`}>
                             #{index + 1}
                           </span>
                           <div className="w-16 h-16 bg-zinc-950 rounded-2xl border border-zinc-800 p-2 flex items-center justify-center shrink-0">
-                            <img src={getLogoForSchool(school.id)} alt={school.nombre} className="w-full h-full object-contain drop-shadow-[0_5px_10px_rgba(0,0,0,0.5)] group-hover:scale-110 transition" />
+                            <img src={getLogoForSchool(school)} alt={school.nombre} className="w-full h-full object-contain group-hover:scale-110 transition" />
                           </div>
                           <div>
                             <h3 className="font-black text-lg text-white group-hover:text-cyan-400 transition">{school.nombre}</h3>
@@ -394,12 +543,11 @@ export default function PointFxPortal() {
                 </div>
               </>
             ) : (
-              /* VISTA DETALLE DE ESCUELA CON RANKING DE SUS ATLETAS */
               <div className="bg-zinc-900/90 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl animate-fadeIn backdrop-blur-md">
                 <div className="p-8 bg-zinc-950 border-b border-zinc-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                   <div className="flex items-center space-x-6">
                     <div className="w-20 h-20 bg-zinc-900 rounded-2xl border border-zinc-800 p-3 flex items-center justify-center shrink-0">
-                      <img src={getLogoForSchool(selectedSchool.id)} alt={selectedSchool.nombre} className="w-full h-full object-contain" />
+                      <img src={getLogoForSchool(selectedSchool)} alt={selectedSchool.nombre} className="w-full h-full object-contain" />
                     </div>
                     <div>
                       <div className="flex items-center gap-3">
@@ -418,32 +566,12 @@ export default function PointFxPortal() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 bg-zinc-950/60 border-b border-zinc-800 font-mono">
-                  <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl text-center">
-                    <span className="text-[10px] text-zinc-400 uppercase font-bold">Total Pts</span>
-                    <span className="text-3xl font-black text-cyan-400 block mt-1">{selectedSchool.points || 0} pts</span>
-                  </div>
-                  <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl text-center">
-                    <span className="text-[10px] text-zinc-400 uppercase font-bold">Oro</span>
-                    <span className="text-3xl font-black text-yellow-400 block mt-1">🥇 {selectedSchool.golds || 0}</span>
-                  </div>
-                  <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl text-center">
-                    <span className="text-[10px] text-zinc-400 uppercase font-bold">Plata</span>
-                    <span className="text-3xl font-black text-zinc-300 block mt-1">🥈 {selectedSchool.silvers || 0}</span>
-                  </div>
-                  <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl text-center">
-                    <span className="text-[10px] text-zinc-400 uppercase font-bold">Bronce</span>
-                    <span className="text-3xl font-black text-amber-600 block mt-1">🥉 {selectedSchool.bronzes || 0}</span>
-                  </div>
-                </div>
-
-                {/* RANKING INTERNO DE ATLETAS DE LA ESCUELA */}
                 <div className="p-8">
                   <h3 className="text-xs font-black text-zinc-300 uppercase tracking-widest mb-6 font-mono">Ranking Interno de Atletas ({selectedSchool.nombre})</h3>
                   {selectedSchool.atletas && selectedSchool.atletas.length > 0 ? (
                     <div className="space-y-3 font-mono">
                       {[...selectedSchool.atletas].sort((a, b) => (b.points || 0) - (a.points || 0)).map((comp, idx) => (
-                        <div key={comp.id} onClick={() => setSelectedAthlete({ ...comp, schoolName: selectedSchool.nombre, schoolLogoImg: getLogoForSchool(selectedSchool.id) })} className="bg-zinc-950 border border-zinc-800 hover:border-cyan-500/40 p-5 rounded-2xl flex justify-between items-center transition cursor-pointer">
+                        <div key={comp.id} onClick={() => setSelectedAthlete({ ...comp, schoolName: selectedSchool.nombre, schoolLogoImg: getLogoForSchool(selectedSchool) })} className="bg-zinc-950 border border-zinc-800 hover:border-cyan-500/40 p-5 rounded-2xl flex justify-between items-center transition cursor-pointer">
                           <div className="flex items-center space-x-4">
                             <span className="font-black text-cyan-400 text-lg w-8">#{idx + 1}</span>
                             <div>
@@ -453,7 +581,6 @@ export default function PointFxPortal() {
                           </div>
                           <div className="text-right">
                             <span className="text-cyan-400 font-black text-2xl">{comp.points || 0} pts</span>
-                            <span className="text-xs text-yellow-400 block">🥇 {comp.golds || 0} Títulos</span>
                           </div>
                         </div>
                       ))}
@@ -467,6 +594,7 @@ export default function PointFxPortal() {
           </div>
         )}
 
+        {/* --- CALENDARIO CON BOTÓN PARA VER FLYER --- */}
         {activeTab === "CALENDARIO" && (
           <div className="space-y-6 animate-fadeIn">
             <div className="border-b border-zinc-800 pb-4">
@@ -487,9 +615,20 @@ export default function PointFxPortal() {
                     <h3 className="text-xl font-black text-white">{ev.nombre}</h3>
                     <p className="text-xs text-zinc-300 mt-2 font-mono">📍 {ev.ubicacion}</p>
                   </div>
-                  <div className="pt-4 border-t border-zinc-800 flex justify-between items-center text-xs font-mono">
-                    <span className="text-zinc-400">Ganador: <strong className="text-white">{ev.ganador}</strong></span>
-                    <span className="text-cyan-400 font-black text-sm">+{ev.puntos} pts</span>
+                  
+                  <div className="space-y-3 pt-4 border-t border-zinc-800">
+                    {ev.flyer_url && (
+                      <button 
+                        onClick={() => setSelectedEvent(ev)}
+                        className="w-full bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 font-bold py-2 rounded-xl text-xs uppercase tracking-wider border border-cyan-500/30 transition flex items-center justify-center gap-2 font-mono"
+                      >
+                        🖼️ Ver Flyer del Torneo
+                      </button>
+                    )}
+                    <div className="flex justify-between items-center text-xs font-mono">
+                      <span className="text-zinc-400">Ganador: <strong className="text-white">{ev.ganador}</strong></span>
+                      <span className="text-cyan-400 font-black text-sm">+{ev.puntos} pts</span>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -497,7 +636,6 @@ export default function PointFxPortal() {
           </div>
         )}
 
-        {/* --- PESTAÑA ATLETAS --- */}
         {activeTab === "ATLETAS" && (
           <div className="space-y-10 animate-fadeIn">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-zinc-800 pb-4 gap-4">
@@ -506,98 +644,23 @@ export default function PointFxPortal() {
                 <p className="text-zinc-300 text-sm font-mono">Ranking individual y podios por categoría de edad.</p>
               </div>
 
-              {/* FILTRO DE CATEGORÍAS */}
               <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-1">
-                {allCategories.map((cat) => {
-                  const isActive = selectedCategory === cat;
-                  return (
-                    <button 
-                      key={cat}
-                      onClick={() => setSelectedCategory(cat)}
-                      className={`px-4 py-2 rounded-full text-[11px] font-black tracking-widest border transition-all duration-200 uppercase font-mono whitespace-nowrap ${
-                        isActive 
-                          ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30 scale-105' 
-                          : 'bg-zinc-900/80 border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-white hover:bg-zinc-800'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  );
-                })}
+                {allCategories.map((cat) => (
+                  <button 
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-4 py-2 rounded-full text-[11px] font-black tracking-widest border transition-all duration-200 uppercase font-mono whitespace-nowrap ${
+                      selectedCategory === cat 
+                        ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30 scale-105' 
+                        : 'bg-zinc-900/80 border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-white hover:bg-zinc-800'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* PODIO DE ATLETAS */}
-            {filteredAthletes.length >= 3 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 items-end">
-                
-                {/* 2do PUESTO ATLETA */}
-                <div onClick={() => setSelectedAthlete(filteredAthletes[1])} className="relative rounded-[28px] p-[1.5px] bg-gradient-to-b from-cyan-500/40 via-blue-600/20 to-zinc-800 cursor-pointer transition transform hover:-translate-y-2 group">
-                  <div className="rounded-[26px] bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-6 backdrop-blur-xl border border-cyan-500/30 text-center relative">
-                    <div className="absolute -top-5 left-1/2 -translate-x-1/2 flex items-center gap-2">
-                      <img src={medallaPlata} alt="Plata" className="w-10 h-10 object-contain drop-shadow-md" />
-                      <span className="bg-zinc-800 text-cyan-300 font-black px-3 py-0.5 rounded-full text-xs border border-cyan-500/40 font-mono">2° ATLETA</span>
-                    </div>
-                    <div className="h-20 my-4 flex items-center justify-center">
-                      <div className="w-14 h-14 bg-zinc-950 rounded-2xl border border-zinc-800 p-1.5 flex items-center justify-center">
-                        <img src={filteredAthletes[1].schoolLogoImg} alt="" className="max-h-full object-contain" />
-                      </div>
-                    </div>
-                    <h3 className="font-extrabold text-xl text-white font-sans">{filteredAthletes[1].nombre}</h3>
-                    <p className="text-xs text-cyan-400 mb-5 font-mono">🥋 {filteredAthletes[1].categoria}</p>
-                    <div className="bg-zinc-950/90 border border-zinc-800 py-3 rounded-2xl font-mono shadow-inner">
-                      <span className="text-3xl font-black text-zinc-200">{filteredAthletes[1].points || 0}</span>
-                      <span className="text-[10px] font-bold text-zinc-500 block uppercase">PUNTOS</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 1er PUESTO ATLETA */}
-                <div onClick={() => setSelectedAthlete(filteredAthletes[0])} className="relative rounded-[28px] p-[2px] bg-gradient-to-b from-cyan-400 via-blue-500 to-zinc-900 cursor-pointer transform md:-translate-y-4 transition group shadow-2xl shadow-cyan-500/20">
-                  <div className="rounded-[26px] bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-7 backdrop-blur-xl border border-cyan-400/50 text-center relative shadow-[inset_0_0_20px_rgba(6,182,212,0.2)]">
-                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex flex-col items-center">
-                      <img src={coronaImg} alt="Corona" className="w-12 h-12 object-contain drop-shadow-[0_0_12px_rgba(234,179,8,0.9)] animate-bounce mb-[-6px] z-10" />
-                      <span className="bg-gradient-to-r from-blue-600 to-cyan-400 text-white font-black px-4 py-1 rounded-full text-xs tracking-widest shadow-lg font-mono border border-cyan-200/50">LÍDER CATEGORÍA</span>
-                    </div>
-                    <div className="h-24 my-4 flex items-center justify-center">
-                      <div className="w-16 h-16 bg-zinc-950 rounded-2xl border border-cyan-500/40 p-2 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.3)]">
-                        <img src={filteredAthletes[0].schoolLogoImg} alt="" className="max-h-full object-contain animate-pulse" />
-                      </div>
-                    </div>
-                    <h3 className="font-black text-2xl md:text-3xl text-white font-sans">{filteredAthletes[0].nombre}</h3>
-                    <p className="text-xs text-cyan-300 font-bold mb-5 font-mono">🥋 {filteredAthletes[0].categoria}</p>
-                    <div className="bg-blue-950/50 border border-cyan-400/50 py-4 rounded-2xl font-mono shadow-inner">
-                      <span className="text-4xl font-black text-cyan-400">{filteredAthletes[0].points || 0}</span>
-                      <span className="text-[10px] font-black text-cyan-200 block uppercase tracking-widest mt-0.5">PUNTOS TOTALES</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 3er PUESTO ATLETA */}
-                <div onClick={() => setSelectedAthlete(filteredAthletes[2])} className="relative rounded-[28px] p-[1.5px] bg-gradient-to-b from-cyan-500/40 via-blue-600/20 to-zinc-800 cursor-pointer transition transform hover:-translate-y-2 group">
-                  <div className="rounded-[26px] bg-gradient-to-b from-zinc-900/95 to-zinc-950 p-6 backdrop-blur-xl border border-cyan-500/30 text-center relative">
-                    <div className="absolute -top-5 left-1/2 -translate-x-1/2 flex items-center gap-2">
-                      <img src={medallaBronce} alt="Bronce" className="w-10 h-10 object-contain drop-shadow-md" />
-                      <span className="bg-zinc-800 text-amber-500 font-black px-3 py-0.5 rounded-full text-xs border border-amber-500/40 font-mono">3° ATLETA</span>
-                    </div>
-                    <div className="h-20 my-4 flex items-center justify-center">
-                      <div className="w-14 h-14 bg-zinc-950 rounded-2xl border border-zinc-800 p-1.5 flex items-center justify-center">
-                        <img src={filteredAthletes[2].schoolLogoImg} alt="" className="max-h-full object-contain" />
-                      </div>
-                    </div>
-                    <h3 className="font-extrabold text-xl text-white font-sans">{filteredAthletes[2].nombre}</h3>
-                    <p className="text-xs text-amber-500 mb-5 font-mono">🥋 {filteredAthletes[2].categoria}</p>
-                    <div className="bg-zinc-950/90 border border-zinc-800 py-3 rounded-2xl font-mono shadow-inner">
-                      <span className="text-3xl font-black text-amber-600">{filteredAthletes[2].points || 0}</span>
-                      <span className="text-[10px] font-bold text-zinc-500 block uppercase">PUNTOS</span>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            )}
-
-            {/* TABLA RESTO DE ATLETAS FILTRADOS */}
             <div className="bg-zinc-900/90 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl backdrop-blur-md">
               <div className="p-5 bg-zinc-950 border-b border-zinc-800 text-xs text-zinc-300 uppercase font-mono font-black tracking-widest flex justify-between">
                 <span>Atleta / Categoría & Escuela</span>
@@ -624,7 +687,6 @@ export default function PointFxPortal() {
                     </div>
                     <div className="text-right">
                       <span className="text-2xl font-black text-cyan-400">{athlete.points || 0} pts</span>
-                      <span className="text-xs text-yellow-400 block mt-0.5">🥇 {athlete.golds || 0} Títulos</span>
                     </div>
                   </div>
                 ))}
@@ -639,77 +701,38 @@ export default function PointFxPortal() {
               <h2 className="text-3xl font-black uppercase tracking-tight text-white">Reglamento Oficial Point FX</h2>
               <p className="text-zinc-300 text-sm font-mono">Normativa de puntuación y categorías de la liga.</p>
             </div>
-
-            <div className="space-y-4 text-sm text-zinc-200">
-              <div className="bg-zinc-900/90 border border-zinc-800 p-6 rounded-2xl shadow-xl backdrop-blur-md">
-                <h3 className="font-black text-white text-base mb-2 text-cyan-400 uppercase font-mono">1. Sistema de Puntuación Anual</h3>
-                <p>Cada torneo otorga puntos directos a la escuela según las medallas obtenidas (Oro: 30 pts, Plata: 15 pts, Bronce: 5 pts). Estos puntajes se consolidan automáticamente en la tabla anual.</p>
-              </div>
-              <div className="bg-zinc-900/90 border border-zinc-800 p-6 rounded-2xl shadow-xl backdrop-blur-md">
-                <h3 className="font-black text-white text-base mb-2 text-cyan-400 uppercase font-mono">2. Pesajes y Categorías Oficiales</h3>
-                <p>Los competidores deben registrarse obligatoriamente en su respectiva categoría de edad (Infantil, Juvenil, Adulto, Senior). El peso exacto es registrado por la balanza oficial en el software de control.</p>
-              </div>
-              <div className="bg-zinc-900/90 border border-zinc-800 p-6 rounded-2xl shadow-xl backdrop-blur-md">
-                <h3 className="font-black text-white text-base mb-2 text-cyan-400 uppercase font-mono">3. Tecnología de Control (Software Point FX)</h3>
-                <p>Todas las mesas de control operan de manera exclusiva con el software de escritorio **Point FX**, garantizando transparencia absoluta y visualización en tiempo real.</p>
-              </div>
-            </div>
           </div>
         )}
 
-        {/* Formulario que solo aparece si estás logueado como Admin */}
-        {user && <AdminForm />}
+        {user && <AdminPanel />}
 
       </main>
 
-      {/* --- MODAL DE ATLETA --- */}
-      {selectedAthlete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-zinc-900 border border-cyan-500/50 rounded-3xl w-full max-w-md p-6 relative shadow-[0_0_30px_rgba(6,182,212,0.2)] font-mono">
+      {/* --- MODAL PARA VER FLYER DE TORNEO --- */}
+      {selectedEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+          <div className="bg-zinc-900 border border-cyan-500/50 rounded-3xl w-full max-w-2xl p-6 relative shadow-2xl font-mono text-center">
             <button 
-              onClick={() => setSelectedAthlete(null)}
+              onClick={() => setSelectedEvent(null)}
               className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800/80 w-8 h-8 rounded-full flex items-center justify-center font-bold"
             >
               ✕
             </button>
-
-            <div className="text-center pb-6 border-b border-zinc-800">
-              <div className="w-16 h-16 bg-blue-600/20 text-cyan-400 mx-auto rounded-2xl border border-cyan-500/30 flex items-center justify-center text-2xl font-black mb-3 shadow-[0_0_15px_rgba(6,182,212,0.3)]">
-                🥋
-              </div>
-              <h3 className="text-2xl font-black text-white font-sans">{selectedAthlete.nombre}</h3>
-              <p className="text-xs text-cyan-400 mt-1 uppercase tracking-widest">{selectedAthlete.categoria} • <span className="text-white">{selectedAthlete.schoolName || selectedSchool?.nombre}</span></p>
+            <h3 className="text-xl font-black text-white mb-4 uppercase">{selectedEvent.nombre}</h3>
+            <div className="max-h-[70vh] overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 flex items-center justify-center p-2 mb-4">
+              <img src={selectedEvent.flyer_url} alt="Flyer Torneo" className="max-h-[65vh] object-contain rounded-xl" />
             </div>
-
-            <div className="py-6 space-y-4">
-              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Historial de Últimos Torneos</h4>
-              <div className="space-y-2">
-                <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
-                  <span className="text-zinc-300">Copa de la Vendimia (Mendoza)</span>
-                  <span className="text-yellow-400 font-bold">🥇 1° Puesto</span>
-                </div>
-                <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
-                  <span className="text-zinc-300">Torneo Regional Centro</span>
-                  <span className="text-zinc-300 font-bold">🥈 2° Puesto</span>
-                </div>
-                <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-between items-center text-xs">
-                  <span className="text-zinc-300">Torneo Nacional - Fecha 1</span>
-                  <span className="text-yellow-400 font-bold">🥇 1° Puesto</span>
-                </div>
-              </div>
-            </div>
-
             <button 
-              onClick={() => setSelectedAthlete(null)}
-              className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition shadow-lg shadow-blue-600/30"
+              onClick={() => setSelectedEvent(null)}
+              className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-2.5 px-6 rounded-xl text-xs uppercase tracking-widest transition"
             >
-              Cerrar Ficha
+              Cerrar Visor
             </button>
           </div>
         </div>
       )}
 
-      {/* BOTÓN FLOTANTE DISCRETO PARA ADMINISTRADOR */}
+      {/* BOTÓN FLOTANTE ADMIN */}
       <div className="fixed bottom-4 right-4 z-50">
         {!user ? (
           <button 
@@ -728,7 +751,7 @@ export default function PointFxPortal() {
         )}
       </div>
 
-      {/* VENTANA EMERGENTE DE LOGIN */}
+      {/* MODAL DE LOGIN */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
           <div className="bg-zinc-900 border border-cyan-500/50 rounded-3xl w-full max-w-sm p-6 relative shadow-2xl font-mono">
