@@ -34,7 +34,8 @@ export default function PointFxPortal() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterCity, setFilterCity] = useState("Todas");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
-  
+  const [filterSchoolId, setFilterSchoolId] = useState("Todas");
+
   // Estados de Autenticación Admin
   const [user, setUser] = useState(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -108,9 +109,12 @@ export default function PointFxPortal() {
   }, [allAthletes]);
 
   const filteredAthletes = useMemo(() => {
-    if (selectedCategory === "Todas") return allAthletes;
-    return allAthletes.filter(a => a.categoria === selectedCategory);
-  }, [allAthletes, selectedCategory]);
+  return allAthletes.filter(a => {
+    const matchesCategory = selectedCategory === "Todas" || a.categoria === selectedCategory;
+    const matchesSchool = filterSchoolId === "Todas" || String(a.escuela_id) === String(filterSchoolId);
+    return matchesCategory && matchesSchool;
+  });
+}, [allAthletes, selectedCategory, filterSchoolId]);
 
   const filteredSchools = sortedSchools.filter(school => {
     const searchLower = searchTerm.toLowerCase();
@@ -643,27 +647,43 @@ export default function PointFxPortal() {
 
         {activeTab === "ATLETAS" && (
           <div className="space-y-10 animate-fadeIn">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-zinc-800 pb-4 gap-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-zinc-800 pb-6 gap-6">
               <div>
                 <h2 className="text-3xl font-black uppercase tracking-tight text-white">Hall of Fame - Atletas Destacados</h2>
-                <p className="text-zinc-300 text-sm font-mono">Ranking individual y podios por categoría de edad.</p>
+                <p className="text-zinc-300 text-sm font-mono">Ranking individual y filtrado por categoría o escuela en tiempo real.</p>
               </div>
 
-              <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-1">
-                {allCategories.map((cat) => (
-                  <button 
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-4 py-2 rounded-full text-[11px] font-black tracking-widest border transition-all duration-200 uppercase font-mono whitespace-nowrap ${
-                      selectedCategory === cat 
-                        ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30 scale-105' 
-                        : 'bg-zinc-900/80 border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-white hover:bg-zinc-800'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
+              {/* 🔍 FILTRO POR ESCUELA */}
+              <div className="w-full md:w-72">
+                <label className="block mb-1 text-[10px] text-cyan-400 font-bold tracking-widest uppercase font-mono">Filtrar por Escuela:</label>
+                <select 
+                  value={filterSchoolId || "Todas"} 
+                  onChange={(e) => setFilterSchoolId(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 px-3 py-2.5 rounded-xl outline-none focus:border-cyan-500 font-mono text-xs uppercase cursor-pointer"
+                >
+                  <option value="Todas">--- TODAS LAS ESCUELAS ---</option>
+                  {escuelas.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre}</option>
+                  ))}
+                </select>
               </div>
+            </div>
+
+            {/* FILTROS POR CATEGORÍA (BOTONES) */}
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {allCategories.map((cat) => (
+                <button 
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-4 py-2 rounded-full text-[11px] font-black tracking-widest border transition-all duration-200 uppercase font-mono whitespace-nowrap ${
+                    selectedCategory === cat 
+                      ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30 scale-105' 
+                      : 'bg-zinc-900/80 border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-white hover:bg-zinc-800'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
             </div>
 
             <div className="bg-zinc-900/90 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl backdrop-blur-md">
